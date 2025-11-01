@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CarbonLink Ethiopia Platform</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Custom font import and application */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        :root { font-family: 'Inter', sans-serif; }
+        /* Green Accent */
+        .carbon-green { background-color: #10B981; }
+        .carbon-green-text { color: #10B981; }
+        .carbon-green-hover:hover { background-color: #0d9669; }
+        /* Custom scrollbar styling */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #111827; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+        /* Sync status display */
+        .sync-error { background-color: #ef4444; color: #1f2937; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+
+    <div id="app" class="flex flex-col md:flex-row h-screen overflow-hidden">
+        
+        <!-- Sidebar Navigation (Desktop) -->
+        <nav id="sidebar" class="hidden md:flex flex-col w-64 bg-gray-800 p-6 shadow-xl z-20">
+            <div class="flex items-center space-x-2 mb-10">
+                <div class="h-8 w-8 carbon-green rounded-full flex items-center justify-center">
+                    <i data-lucide="leaf" class="w-5 h-5 text-gray-900"></i>
+                </div>
+                <h1 class="text-xl font-bold">CarbonLink Ethiopia</h1>
+            </div>
+            
+            <div id="desktop-nav" class="space-y-3 font-medium">
+                <!-- Navigation items inserted by JS -->
+            </div>
+            
+            <div class="mt-auto pt-6 border-t border-gray-700/50">
+                 <p class="text-xs text-gray-500">Status: <span id="sync-status" class="text-green-400">Synced</span></p>
+                 <p class="text-xs text-gray-500">App ID: <span id="app-id-display" class="break-all text-gray-400">...</span></p>
+                 <p class="text-xs text-gray-500">User ID: <span id="user-id-display" class="break-all text-gray-400">...</span></p>
+                 <p class="text-xs text-gray-500">View: <span id="current-view-display">...</span></p>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 overflow-y-auto p-4 md:p-8 relative">
+            
+            <header class="mb-6 md:mb-8 flex justify-between items-center sticky top-0 bg-gray-900 z-10 py-2 border-b border-gray-800">
+                <h2 class="text-3xl font-extrabold text-white" id="dashboard-title">Loading...</h2>
+                <div class="flex items-center space-x-4">
+                    <!-- Cart Badge (Buyer View Only) -->
+                    <button id="cart-button" class="relative p-2 rounded-full hover:bg-gray-800 transition" onclick="app.switchView('cart')">
+                        <i data-lucide="shopping-cart" class="w-6 h-6 text-green-400"></i>
+                        <span id="cart-count" class="absolute top-0 right-0 h-5 w-5 bg-red-600 text-white text-xs font-bold rounded-full flex items-center justify-center -mt-1">0</span>
+                    </button>
+
+                    <span class="text-sm font-semibold text-gray-300 hidden md:inline">Ready</span>
+                    <i data-lucide="user-circle" class="w-6 h-6 text-green-400"></i>
+                </div>
+            </header>
+            
+            <!-- Connectivity Banner -->
+            <div id="connectivity-banner" class="sync-error p-3 rounded-lg text-center font-semibold mb-6 hidden">
+                Connection Error. Data is being saved locally and will sync when connection resumes.
+            </div>
+
+            <!-- Dashboard Content Container -->
+            <div id="dashboard-content" class="pb-24">
+                <div id="loading-spinner" class="text-center p-20">
+                    <div class="animate-spin rounded-full h-16 w-16 border-b-2 border-green-500 mx-auto"></div>
+                    <p class="mt-4 text-lg text-gray-400">Initializing Firebase and Data Listeners...</p>
+                </div>
+            </div>
+            
+        </main>
+
+        <!-- Bottom Navigation (Mobile) -->
+        <nav id="bottom-nav" class="md:hidden fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 shadow-2xl z-20">
+            <div id="mobile-nav" class="flex justify-around items-center h-16">
+                 <!-- Mobile navigation items inserted by JS -->
+            </div>
+        </nav>
+    </div>
+
+    <!-- Custom Modal Container for Forms and Details -->
+    <div id="dynamic-modal-container" class="fixed inset-0 bg-gray-900 bg-opacity-90 z-50 flex items-start justify-center pt-10 hidden opacity-0 transition-opacity duration-300 overflow-y-auto">
+        <div id="modal-content-wrapper" class="bg-gray-800 p-6 md:p-8 rounded-xl shadow-2xl max-w-4xl w-full mx-4 mb-10 transform transition-transform duration-300 scale-95">
+            <!-- Modal content injected here -->
+        </div>
+    </div>
+
+    <script type="module">
+        // --- FIREBASE IMPORTS (Aliased to prevent name collision error) ---
+        import { initializeApp as initFirebaseApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, collection, onSnapshot, setDoc, updateDoc, deleteDoc, runTransaction, getDoc, getDocs, query, where, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel as setFirebaseLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+
+        // --- GLOBAL CONSTANTS & FIREBASE SETUP ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // Initial Seed Data (Ethiopia-centric)
+        const initialSeedData = {
+            verifierQueue: [
+                { type: 'Reforestation', region: 'Oromia (Green Legacy)', tonnes: 203.4, submitted: new Date().toISOString().slice(0, 10), lat: '8.7', lng: '39.4', proof: 'Initial Setup Proof', aiConfidence: 'Pending', ndvi: 'Pending', farmerId: 'System', farmerProjectId: 'initial-seed-project' },
+                { type: 'Biochar', region: 'Sidama (Coffee Waste)', tonnes: 112.0, submitted: new Date().toISOString().slice(0, 10), lat: '6.5', lng: '38.2', proof: 'Initial Setup Proof', aiConfidence: 'Pending', ndvi: 'Pending', farmerId: 'System', farmerProjectId: 'initial-seed-project-2' },
+            ],
+            marketplaceCredits: [
+                { id: 'credit-1', region: 'Oromia', price: 6.10, total: 500, verified: true, img: 'https://placehold.co/400x300/10B981/ffffff?text=Oromia+Reforestation', description: 'Smallholder farm reforestation project in Oromia.', originatingProjectId: 'verified-seed-project-a' },
+                { id: 'credit-2', region: 'SNNPR', price: 7.98, total: 1100, verified: true, img: 'https://placehold.co/400x300/059669/ffffff?text=Biochar+Project+Sidama', description: 'Sustainable biochar production from coffee waste in Sidama.', originatingProjectId: 'verified-seed-project-b' },
+                { id: 'credit-3', region: 'Afar', price: 8.50, total: 350, verified: true, img: 'https://placehold.co/400x300/FACC15/000000?text=Solar+Project+Afar', description: 'Solar-for-Schools program in Afar region.', originatingProjectId: 'verified-seed-project-c' },
+            ],
+        };
+
+
+        let app, db, auth;
+        let currentUserId = null;
+        let dataServiceInstance = null;
+        let unsubscribeListeners = []; // Array to hold all real-time unsubscription functions
+
+        // Initialize Firebase
+        if (Object.keys(firebaseConfig).length > 0) {
+            app = initFirebaseApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            setFirebaseLogLevel('debug'); 
+        } else {
+             console.error("Firebase config is missing. Application cannot function with persistent data.");
+        }
+
+
+        // --- APP STATE AND DOM ELEMENTS ---
+        const appState = {
+            currentView: 'farmer',
+            data: { farmerProjects: [], verifierQueue: [], marketplaceCredits: [], cart: [] }, 
+            isOnline: navigator.onLine 
+        };
+
+        const DOMElements = {
+            dashboardTitle: document.getElementById('dashboard-title'),
+            dashboardContent: document.getElementById('dashboard-content'),
+            desktopNav: document.getElementById('desktop-nav'),
+            mobileNav: document.getElementById('mobile-nav'),
+            currentViewDisplay: document.getElementById('current-view-display'),
+            cartButton: document.getElementById('cart-button'),
+            cartCount: document.getElementById('cart-count'),
+            modalContainer: document.getElementById('dynamic-modal-container'),
+            modalContentWrapper: document.getElementById('modal-content-wrapper'),
+            userIdDisplay: document.getElementById('user-id-display'),
+            appIdDisplay: document.getElementById('app-id-display'),
+            syncStatus: document.getElementById('sync-status'),
+            connectivityBanner: document.getElementById('connectivity-banner'),
+            loadingSpinner: document.getElementById('loading-spinner')
+        };
+        
+        
+        // --- FIREBASE DATA SERVICE (Handles paths and seeding) ---
+        class DataService {
+            constructor(db, appId) {
+                this.db = db;
+                this.appId = appId;
+            }
+
+            // --- PATH GENERATORS ---
+            getFarmerProjectsCollection(userId) {
+                return collection(this.db, 'artifacts', this.appId, 'users', userId, 'farmerProjects');
+            }
+            getPublicCollection(collectionName) {
+                return collection(this.db, 'artifacts', this.appId, 'public', 'data', collectionName);
+            }
+            getCartDocument(userId) {
+                return doc(this.getPublicCollection('carts'), userId);
+            }
+
+            // --- LISTENERS & SEEDING ---
+            async seedData(collectionName, seedArray) {
+                const colRef = this.getPublicCollection(collectionName);
+                const snapshot = await getDocs(colRef);
+                if (snapshot.empty) {
+                    console.log(`Seeding ${collectionName} collection...`);
+                    const batch = writeBatch(this.db);
+                    seedArray.forEach(item => {
+                        // Use doc(colRef) for auto ID, unless item has a specific 'id' field for doc name
+                        const docRef = item.id ? doc(colRef, item.id) : doc(colRef); 
+                        batch.set(docRef, item);
+                    });
+                    await batch.commit();
+                }
+            }
+
+            initListeners(userId, updateCallback) {
+                // Clear existing listeners
+                unsubscribeListeners.forEach(unsub => unsub());
+                unsubscribeListeners = [];
+
+                // Seed public data if empty (non-blocking)
+                this.seedData('verifierQueue', initialSeedData.verifierQueue);
+                this.seedData('marketplaceCredits', initialSeedData.marketplaceCredits);
+
+                // 1. Farmer Projects (Private)
+                const farmerProjectsRef = this.getFarmerProjectsCollection(userId);
+                unsubscribeListeners.push(onSnapshot(farmerProjectsRef, (snapshot) => {
+                    appState.data.farmerProjects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    updateCallback();
+                }, (error) => console.error("Firestore Error (Farmer Projects):", error)));
+
+                // 2. Verifier Queue (Public)
+                const verifierQueueRef = this.getPublicCollection('verifierQueue');
+                unsubscribeListeners.push(onSnapshot(verifierQueueRef, (snapshot) => {
+                    appState.data.verifierQueue = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    updateCallback();
+                }, (error) => console.error("Firestore Error (Verifier Queue):", error)));
+
+                // 3. Marketplace Credits (Public)
+                const marketplaceCreditsRef = this.getPublicCollection('marketplaceCredits');
+                unsubscribeListeners.push(onSnapshot(marketplaceCreditsRef, (snapshot) => {
+                    appState.data.marketplaceCredits = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    updateCallback();
+                }, (error) => console.error("Firestore Error (Marketplace):", error)));
+                
+                // 4. Cart (Public/User-specific Document) - initialize with empty array if not exists
+                const cartRef = this.getCartDocument(userId);
+                unsubscribeListeners.push(onSnapshot(cartRef, (docSnap) => {
+                     appState.data.cart = docSnap.exists() && docSnap.data().items ? docSnap.data().items : [];
+                     updateCallback();
+                }, (error) => console.error("Firestore Error (Cart):", error)));
+            }
+
+            // --- EXTERNAL API HOOKS (MOCK) ---
+            async getNDVIData(lat, lng) {
+                if (!navigator.onLine) {
+                    customAlert("Cannot check real-time satellite data while offline.", "Connectivity Required");
+                    return null;
+                }
+                DOMElements.syncStatus.textContent = 'Fetching Satellite Data...';
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate network latency
+                DOMElements.syncStatus.textContent = 'Synced';
+                return { 
+                    confidence: (85 + Math.floor(Math.random() * 12)) + '%',
+                    ndvi: (0.60 + Math.random() * 0.3).toFixed(2) // Mock NDVI value
+                };
+            }
+            
+            async initiatePayment(amount, description) {
+                if (!navigator.onLine) {
+                    customAlert("Cannot process payment while offline.", "Connectivity Required");
+                    return false;
+                }
+                DOMElements.syncStatus.textContent = 'Processing Payment...';
+                await new Promise(resolve => setTimeout(resolve, 3000)); // Simulate payment processing time
+                DOMElements.syncStatus.textContent = 'Synced';
+                return true; // MOCK SUCCESS
+            }
+        }
+
+        // --- UTILITY & MODAL FUNCTIONS ---
+        function customAlert(message, title = "Platform Notification") {
+            const modalHtml = `
+                <div class="bg-gray-800 p-6 rounded-xl shadow-2xl max-w-sm w-full">
+                    <h4 class="text-xl font-bold mb-3 text-white">${title}</h4>
+                    <p class="text-gray-300 mb-6">${message}</p>
+                    <button onclick="window.app.hideModal()" class="carbon-green text-gray-900 w-full py-2 rounded-lg font-bold hover:bg-green-400 transition">
+                        OK
+                    </button>
+                </div>
+            `;
+            showModal(modalHtml, true);
+        }
+        window.alert = customAlert; 
+
+        function showModal(contentHtml, isSimple = false) {
+            DOMElements.modalContentWrapper.innerHTML = contentHtml;
+            DOMElements.modalContentWrapper.classList.toggle('max-w-4xl', !isSimple);
+            DOMElements.modalContentWrapper.classList.toggle('max-w-sm', isSimple);
+            
+            DOMElements.modalContainer.classList.remove('hidden', 'opacity-0');
+            DOMElements.modalContainer.classList.add('opacity-100');
+            DOMElements.modalContentWrapper.classList.remove('scale-95');
+            DOMElements.modalContentWrapper.classList.add('scale-100');
+            
+            setTimeout(() => { lucide.createIcons(); }, 0);
+        }
+
+        function hideModal() {
+            DOMElements.modalContainer.classList.remove('opacity-100');
+            DOMElements.modalContentWrapper.classList.remove('scale-100');
+            DOMElements.modalContainer.classList.add('opacity-0');
+            DOMElements.modalContentWrapper.classList.add('scale-95');
+            setTimeout(() => {
+                DOMElements.modalContainer.classList.add('hidden');
+                DOMElements.modalContentWrapper.innerHTML = '';
+            }, 300); 
+        }
+        
+        // Expose to window for inline HTML handlers
+        window.app = { showModal, hideModal };
+
+
+        // --- DASHBOARD DEFINITIONS & RENDERING ---
+        const dashboards = {
+            'farmer': { title: 'Farmer: Climate Action Log', icon: 'tractor', render: renderFarmerDashboard, showCart: false },
+            'verifier': { title: 'Verifier: GreenProof Review', icon: 'check-square', render: renderVerifierDashboard, showCart: false },
+            'buyer': { title: 'Marketplace: Global Carbon Buyers', icon: 'shopping-cart', render: renderBuyerDashboard, showCart: true },
+            'cart': { title: 'Shopping Cart & Checkout', icon: 'credit-card', render: renderCartCheckout, showCart: true }
+        };
+
+        function render() {
+            if (!currentUserId) return; // Only render if authenticated
+            
+            DOMElements.loadingSpinner.classList.add('hidden'); // Hide loading spinner
+
+            const viewData = dashboards[appState.currentView];
+            DOMElements.dashboardTitle.textContent = viewData.title;
+            DOMElements.dashboardContent.innerHTML = viewData.render();
+            
+            setTimeout(() => { lucide.createIcons(); }, 0);
+            renderNav();
+        }
+
+        function switchView(newView) {
+            appState.currentView = newView;
+            render(); 
+            DOMElements.currentViewDisplay.textContent = dashboards[appState.currentView].title.split(':')[0];
+        }
+
+        function renderNav() {
+            DOMElements.desktopNav.innerHTML = '';
+            DOMElements.mobileNav.innerHTML = '';
+
+            Object.keys(dashboards).filter(k => k !== 'cart').forEach(viewKey => {
+                DOMElements.desktopNav.appendChild(createNavItem(viewKey, false));
+                DOMElements.mobileNav.appendChild(createNavItem(viewKey, true));
+            });
+            
+            const cartTotalItems = appState.data.cart.reduce((sum, item) => sum + item.quantity, 0);
+            DOMElements.cartCount.textContent = cartTotalItems;
+        }
+
+        function createNavItem(viewKey, isMobile = false) {
+            const { title, icon } = dashboards[viewKey];
+            const isActive = viewKey === appState.currentView;
+            
+            const baseClasses = isMobile ? 
+                'flex flex-col items-center p-2 text-sm font-medium transition-colors' :
+                'flex items-center space-x-3 p-3 rounded-xl transition-colors';
+            
+            const activeClasses = isActive ? 
+                'carbon-green text-gray-900 shadow-lg' : 
+                'text-gray-400 hover:bg-gray-700 hover:text-white';
+            
+            const item = document.createElement('a');
+            item.href = "#";
+            item.className = `${baseClasses} ${activeClasses}`;
+            item.setAttribute('data-view', viewKey);
+            item.onclick = (e) => {
+                e.preventDefault();
+                window.app.switchView(viewKey);
+            };
+
+            const iconHtml = `<i data-lucide="${icon}" class="${isMobile ? 'w-5 h-5 mb-0.5' : 'w-6 h-6'}"></i>`;
+            const displayTitle = isMobile ? title.split(':')[0] : title;
+            const titleHtml = `<span class="${isMobile ? 'text-xs' : ''}">${displayTitle}</span>`;
+
+            item.innerHTML = iconHtml + titleHtml;
+            
+            setTimeout(() => { lucide.createIcons(); }, 0);
+            return item;
+        }
+
+        window.app.render = render;
+        window.app.switchView = switchView;
+
+
+        // --- 1. FARMER DASHBOARD IMPLEMENTATION (Firestore Write) ---
+        async function submitNewAction(event) {
+            event.preventDefault();
+            if (!currentUserId) return customAlert("Authentication required to submit.");
+
+            const form = event.target;
+            const actionName = form.action_name.value;
+            const actionType = form.action_type.value;
+
+            hideModal();
+            DOMElements.syncStatus.textContent = 'Submitting...';
+
+            try {
+                // 1. Create document reference for the new project in farmer's private collection
+                const newProjectRef = doc(dataServiceInstance.getFarmerProjectsCollection(currentUserId));
+                const newProjectId = newProjectRef.id;
+
+                const newProjectData = { 
+                    name: actionName, 
+                    type: actionType, 
+                    tonnes: 0, 
+                    status: 'PENDING VERIFICATION', 
+                    progress: '25%', 
+                    date: new Date().toISOString().slice(0, 10),
+                    farmerId: currentUserId // Storing for easy linking
+                };
+
+                // 2. Create entry for the public verifier queue
+                const verifierEntryData = { 
+                    type: actionType, 
+                    region: 'Ethiopia (User Logged)', 
+                    tonnes: 0, 
+                    submitted: new Date().toISOString().slice(0, 10), 
+                    lat: 'Mock GPS', 
+                    lng: 'Mock GPS', 
+                    proof: 'Farmer submitted initial documents', 
+                    aiConfidence: 'Pending', 
+                    ndvi: 'Pending', 
+                    farmerId: currentUserId,
+                    farmerProjectId: newProjectId // Link back to the private doc
+                };
+
+                // Use a batch to ensure both writes succeed or fail together
+                const batch = writeBatch(db);
+                batch.set(newProjectRef, newProjectData);
+                batch.set(doc(dataServiceInstance.getPublicCollection('verifierQueue'), newProjectId), verifierEntryData);
+                
+                await batch.commit();
+
+                customAlert(`Action "${actionName}" submitted for verification.`, 'Submission Successful');
+            } catch (error) {
+                console.error("Error submitting new action:", error);
+                customAlert('Failed to submit action. Check console for details.', 'Submission Error');
+            } finally {
+                DOMElements.syncStatus.textContent = 'Synced';
+            }
+        }
+        window.app.submitNewAction = submitNewAction; // Expose to window
+
+        function renderNewActionForm() {
+             return `
+                <div class="flex justify-between items-center pb-4 border-b border-gray-700 mb-6">
+                    <h4 class="text-2xl font-bold text-white">Log New Ethiopian Climate Action</h4>
+                    <button onclick="window.app.hideModal()" class="text-gray-400 hover:text-white transition"><i data-lucide="x" class="w-6 h-6"></i></button>
+                </div>
+                <form onsubmit="window.app.submitNewAction(event)" class="space-y-6">
+                    <div>
+                        <label for="action_name" class="block text-sm font-medium text-gray-300 mb-1">Project Name / Description</label>
+                        <input type="text" id="action_name" name="action_name" required placeholder="e.g., Green Legacy planting on plot B" class="w-full bg-gray-700 border border-gray-600 p-3 rounded-lg text-white focus:ring-green-500 focus:border-green-500">
+                    </div>
+                    <div>
+                        <label for="action_type" class="block text-sm font-medium text-gray-300 mb-1">Action Type</label>
+                        <select id="action_type" name="action_type" required class="w-full bg-gray-700 border border-gray-600 p-3 rounded-lg text-white focus:ring-green-500 focus:border-green-500">
+                            <option value="reforestation">Reforestation / Tree Planting</option>
+                            <option value="biochar">Biochar from Coffee/Crop Waste</option>
+                            <option value="solar">Small-scale Solar/Renewable Energy</option>
+                            <option value="agri">Regenerative Agriculture</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="carbon-green carbon-green-hover text-gray-900 w-full py-3 rounded-lg font-bold transition">
+                        Submit Action for Tracking & Verification
+                    </button>
+                </form>
+            `;
+        }
+        window.app.renderNewActionForm = renderNewActionForm; // Expose to window
+
+        function renderFarmerDashboard() {
+            // Client-side mapping of project status based on public Marketplace data
+            const projects = appState.data.farmerProjects.map(p => {
+                const verifiedCredit = appState.data.marketplaceCredits.find(c => c.originatingProjectId === p.id);
+                if (verifiedCredit) {
+                    // Project is verified and minted
+                    return { ...p, status: 'VERIFIED', tonnes: verifiedCredit.total, creditId: verifiedCredit.id };
+                } else if (!appState.data.verifierQueue.find(q => q.farmerProjectId === p.id)) {
+                    // Project is not in queue AND not verified (assume rejected or finished verification)
+                    // Note: In a real app, we'd check a "rejection" collection. Here, we'll keep the original status if it's not verified.
+                    return p; 
+                }
+                // Default to original status
+                return p;
+            });
+
+             const totalTonnes = projects.filter(p => p.status === 'VERIFIED').reduce((sum, p) => sum + (p.tonnes || 0), 0);
+            const gptBalance = totalTonnes; 
+            const gptPrice = 5.50; // Mock rate in ETB
+            const etbValue = gptBalance * gptPrice;
+
+            return `
+                <p class="text-sm text-gray-400 mb-4">Turn your climate efforts into GreenProof Tokens (GPT) and cash. Every project logged helps Ethiopia lead Africa's carbon economy.</p>
+
+                <!-- Wallet Card (Enhanced GPT Aesthetic) -->
+                <div class="bg-gradient-to-br from-green-600 to-green-500 p-6 sm:p-8 rounded-2xl shadow-xl mb-8">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-xl font-semibold text-white">GreenProof Token (GPT) Balance</h3>
+                        <!-- GPT Token Icon -->
+                        <div class="h-10 w-10 bg-white/20 rounded-full flex items-center justify-center border-2 border-white/50">
+                            <i data-lucide="leaf" class="w-6 h-6 text-white"></i>
+                        </div>
+                    </div>
+                    <div class="flex items-baseline mt-4 space-x-4">
+                        <p class="text-5xl font-extrabold text-white">${gptBalance.toFixed(2)} GPT</p>
+                        <p class="text-2xl font-semibold text-white/90">~ ETB ${etbValue.toFixed(2)}</p>
+                    </div>
+                    <button onclick="alert('Withdrawal initiated for ETB ${etbValue.toFixed(2)} via Telebirr.', 'Withdrawal Request')" class="mt-6 bg-white text-green-700 font-bold py-2 px-6 rounded-full shadow-lg hover:shadow-xl transition duration-300">
+                        Cash Out (Telebirr)
+                    </button>
+                </div>
+                
+                <!-- Project List -->
+                <h3 class="text-2xl font-bold mb-4">My Verified Climate Actions (${projects.length})</h3>
+                <div class="space-y-4">
+                    ${projects.length === 0 ? 
+                        `<div class="text-center p-10 bg-gray-800 rounded-xl text-gray-400">No projects found. Log a new action to start earning!</div>` :
+                        projects.map(p => `
+                        <div class="bg-gray-800 p-5 rounded-xl shadow-lg flex justify-between items-center transition duration-300 hover:ring-2 hover:ring-green-500">
+                            <div>
+                                <p class="text-lg font-semibold text-green-400">${p.name}</p>
+                                <p class="text-sm text-gray-400">Project Type: ${p.type}</p>
+                                ${p.status === 'VERIFIED' ? 
+                                    `<span class="text-xs carbon-green px-2 py-0.5 rounded-full font-bold mt-1 inline-block">VERIFIED (Credit ID: ${p.creditId || 'N/A'})</span>` : 
+                                    p.status === 'PAYOUT IN PROGRESS' ?
+                                    `<span class="text-xs bg-yellow-600 text-white px-2 py-0.5 rounded-full font-bold mt-1 inline-block">PAYOUT IN PROGRESS</span>` :
+                                    p.status === 'REJECTED' ?
+                                    `<span class="text-xs bg-red-600 text-white px-2 py-0.5 rounded-full font-bold mt-1 inline-block">REJECTED</span>` :
+                                    `<span class="text-xs bg-orange-600 text-white px-2 py-0.5 rounded-full font-bold mt-1 inline-block">PENDING VERIFICATION (${p.progress})</span>`
+                                }
+                            </div>
+                            <div class="text-right">
+                                <p class="text-2xl font-bold text-white">${p.tonnes > 0 ? p.tonnes.toFixed(1) + ' GPT' : 'Pending Mint'}</p>
+                                <p class="text-sm text-gray-400">Submitted: ${p.date}</p>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                
+                <!-- Floating Action Button (Mobile & Desktop Trigger) -->
+                <button onclick="window.app.showModal(window.app.renderNewActionForm())" class="fixed bottom-20 md:bottom-8 right-4 carbon-green text-gray-900 p-4 rounded-full shadow-2xl z-30 flex items-center space-x-2 font-bold hover:bg-green-400 transition">
+                    <i data-lucide="plus" class="w-6 h-6"></i>
+                    <span class="md:hidden">Log New Action</span>
+                </button>
+            `;
+        }
+        
+        // --- NDVI VISUALIZATION HELPER ---
+        function renderNdviGauge(ndviValue) {
+            const val = parseFloat(ndviValue);
+            // NDVI ranges from -1.0 to +1.0. We map this range for the visual bar.
+            const percentage = Math.max(0, Math.min(100, (val + 1) * 50)); // Map -1 to 0% and +1 to 100%
+            
+            let color;
+            if (val > 0.75) {
+                color = 'bg-green-500'; // High vegetation (Excellent)
+            } else if (val > 0.50) {
+                color = 'bg-yellow-500'; // Moderate vegetation (Good)
+            } else if (val > 0.25) {
+                color = 'bg-orange-500'; // Low vegetation (Poor)
+            } else {
+                color = 'bg-red-500'; // Bare soil/Water (Very Poor)
+            }
+
+            return `
+                <div class="mb-4 pt-4 border-t border-gray-600">
+                    <p class="text-sm font-semibold text-gray-300 mb-2">Vegetation Health Index (NDVI)</p>
+                    <div class="w-full bg-gray-600 rounded-full h-4 relative">
+                        <!-- Bar fill -->
+                        <div class="h-4 ${color} rounded-full transition-all duration-1000" style="width: ${percentage}%;"></div>
+                        <!-- Current Value Marker (optional but helpful) -->
+                         <div class="absolute h-6 w-1 bg-white top-[-5px]" style="left: ${percentage}%;"></div>
+                    </div>
+                    <div class="flex justify-between text-xs text-gray-400 mt-1">
+                        <span>Bare Soil (-1.0)</span>
+                        <span>Dense Canopy (+1.0)</span>
+                    </div>
+                </div>
+            `;
+        }
+        window.app.renderNdviGauge = renderNdviGauge; // Expose to window
+
+        // --- 2. VERIFIER DASHBOARD IMPLEMENTATION (Firestore Read/Write & API Hook) ---
+
+        async function showReviewModal(projectId) {
+            const project = appState.data.verifierQueue.find(p => p.id === projectId);
+            if (!project) {
+                customAlert(`Error: Project ${projectId} details not found in queue.`, "Data Error");
+                return;
+            }
+
+            // 1. Initial render with loading state
+            const loadingHtml = `<div class="text-center p-20"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-green-500 mx-auto"></div><p class="mt-4 text-lg text-gray-400">Fetching satellite data...</p></div>`;
+            showModal(renderReviewDetail(project, loadingHtml));
+            
+            // 2. Fetch real-time data from API hook
+            try {
+                // IMPORTANT: If 'Pending' is present, use mock data to generate the required NDVI value
+                let apiData = {};
+                if (project.aiConfidence === 'Pending') {
+                    apiData = await dataServiceInstance.getNDVIData(project.lat, project.lng);
+                } else {
+                    // Use existing data if already fetched once
+                    apiData = {
+                        confidence: project.aiConfidence,
+                        ndvi: project.ndvi
+                    };
+                }
+
+                if (apiData.ndvi) {
+                    project.aiConfidence = apiData.confidence;
+                    project.ndvi = apiData.ndvi;
+                }
+            } catch (e) {
+                console.error('API Error during NDVI fetch:', e);
+                customAlert('Failed to fetch NDVI data. Proceeding with existing mock data.', 'API Error');
+            }
+            
+            // 3. Re-render modal with fetched data
+            showModal(renderReviewDetail(project));
+        }
+        window.app.showReviewModal = showReviewModal;
+
+        function renderReviewDetail(p, dataContent = null) {
+            // Check if notes element exists before trying to access its value
+            const notesElement = document.getElementById('verifier-notes');
+            const notesContent = notesElement ? notesElement.value : '';
+
+            const isFetching = dataContent !== null;
+            
+            return `
+                <div class="flex justify-between items-center pb-4 border-b border-gray-700 mb-6">
+                    <h4 class="text-2xl font-bold text-orange-400">Review Project: ${p.type} (${p.id})</h4>
+                    <button onclick="window.app.hideModal()" class="text-gray-400 hover:text-white transition"><i data-lucide="x" class="w-6 h-6"></i></button>
+                </div>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="lg:col-span-1 space-y-4">
+                         <div class="p-4 bg-gray-700 rounded-lg">
+                            <p class="text-sm font-semibold text-gray-300">Farmer/Project ID</p>
+                            <p class="text-lg text-white break-words">${p.farmerId || 'N/A'}</p>
+                        </div>
+                        <div class="p-4 bg-gray-700 rounded-lg">
+                            <p class="text-sm font-semibold text-gray-300">Region/GPS</p>
+                            <p class="text-lg text-white">${p.region}</p>
+                            <p class="text-xs text-gray-400">Lat: ${p.lat}, Lng: ${p.lng}</p>
+                        </div>
+                        <div class="p-4 bg-gray-700 rounded-lg">
+                            <p class="text-sm font-semibold text-gray-300">Submitted Proof</p>
+                            <p class="text-lg text-white">${p.proof}</p>
+                        </div>
+                        <div class="p-4 bg-gray-700 rounded-lg">
+                            <p class="text-sm font-semibold text-gray-300">Est. Carbon Sequestration</p>
+                            <p class="text-3xl font-extrabold text-white">${p.tonnes.toFixed(1)} tCO2e</p>
+                        </div>
+                    </div>
+
+                    <div class="lg:col-span-2 space-y-4">
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <h5 class="text-lg font-semibold text-gray-300 mb-2">AI & Satellite Verification Data (Ethiopia)</h5>
+                            ${dataContent || `
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <p class="text-sm text-gray-400">AI Confidence Match:</p>
+                                    <p class="text-xl text-white font-bold">${p.aiConfidence}</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-400">NDVI Value:</p>
+                                    <p class="text-xl text-white font-bold">${p.ndvi}</p>
+                                </div>
+                            </div>
+                            
+                            <!-- NDVI VISUALIZATION COMPONENT -->
+                            ${window.app.renderNdviGauge(p.ndvi)} 
+                            
+                            <div class="mt-4 bg-gray-900 h-64 rounded-lg flex items-center justify-center border-2 border-green-500 border-dashed">
+                                <p class="text-gray-500">MOCK SATELLITE/DRONE VIEW</p>
+                            </div>
+                            `}
+                        </div>
+
+                        <div class="p-4 bg-gray-700 rounded-lg border-t border-gray-600">
+                            <p class="text-lg font-semibold text-gray-300 mb-4">Verification Decision</p>
+                            <textarea id="verifier-notes" placeholder="Add mandatory verification notes here (e.g., 'NDVI confirmed planting coverage')..." rows="3" class="w-full bg-gray-600 p-3 rounded-lg text-white focus:ring-green-500 focus:border-green-500 mb-4">${notesContent}</textarea>
+                            <div class="flex justify-end space-x-3">
+                                <button onclick="window.app.handleVerification('${p.id}', '${p.farmerProjectId}', '${p.farmerId}', 'reject')" class="bg-red-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-red-700 transition" ${isFetching ? 'disabled' : ''}>
+                                    Reject
+                                </button>
+                                <button onclick="window.app.handleVerification('${p.id}', '${p.farmerProjectId}', '${p.farmerId}', 'approve')" class="carbon-green text-gray-900 font-bold py-3 px-6 rounded-lg hover:bg-green-400 transition" ${isFetching ? 'disabled' : ''}>
+                                    Approve & Mint
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        async function handleVerification(verifierQueueId, farmerProjectId, farmerId, action) {
+            // farmerId and farmerProjectId are passed for potential future logging/private update logic, 
+            // but the transaction below is restricted to public collections to avoid permission errors.
+
+            DOMElements.syncStatus.textContent = 'Processing...';
+
+            try {
+                await runTransaction(db, async (transaction) => {
+                    // --- READ PHASE (must be first) ---
+                    const verifierRef = doc(dataServiceInstance.getPublicCollection('verifierQueue'), verifierQueueId);
+                    const verifierDoc = await transaction.get(verifierRef); // Read the document to get the data
+
+                    if (!verifierDoc.exists()) {
+                         // If it doesn't exist, stop the transaction early
+                         throw new Error(`Verifier queue item ${verifierQueueId} not found.`);
+                    }
+
+                    const projectData = verifierDoc.data();
+
+                    // --- WRITE PHASE (must be second) ---
+
+                    // 1. Remove from Verifier Queue (WRITE - OK since public)
+                    transaction.delete(verifierRef);
+
+                    if (action === 'approve') {
+                        const verifiedTonnes = 100 + Math.floor(Math.random() * 500); // Mock final tonnes
+
+                        // 2. Create new credit in Marketplace (PUBLIC WRITE - OK)
+                        const newCreditRef = doc(dataServiceInstance.getPublicCollection('marketplaceCredits'));
+                        const marketplaceCredit = {
+                            region: projectData?.region || 'Unknown',
+                            price: 5.00 + Math.random() * 3, 
+                            total: verifiedTonnes,
+                            verified: true,
+                            img: `https://placehold.co/400x300/${Math.floor(Math.random()*16777215).toString(16)}/ffffff?text=Verified+Credit`,
+                            description: `GreenProof Credit from project ${projectData?.region}.`,
+                            originatingProjectId: farmerProjectId, // Link back to the private doc
+                            verifierNotes: document.getElementById('verifier-notes').value || 'System Approved'
+                        };
+                        transaction.set(newCreditRef, marketplaceCredit);
+                        
+                        customAlert(`Project APPROVED! ${verifiedTonnes} tCO2e minted and listed.`, 'Minting Successful');
+
+                    } else if (action === 'reject') {
+                        // For rejection, we simply delete from the queue. The farmer's client will observe the absence 
+                        // and update their status (e.g., to "Requires Re-submission" or "Rejected") client-side.
+                        customAlert(`Project REJECTED.`, 'Rejection Sent');
+                    }
+                });
+            } catch (error) {
+                console.error("Transaction failed:", error);
+                customAlert("Transaction failed. Data was rolled back. See console for error details. (Permissions and Read/Write order checked)", "Verification Error");
+            } finally {
+                hideModal();
+                DOMElements.syncStatus.textContent = 'Synced';
+                render(); // Force re-render of the verifier dashboard
+            }
+        }
+        window.app.handleVerification = handleVerification;
+
+
+        function renderVerifierDashboard() {
+            const pending = appState.data.verifierQueue;
+            return `
+                <p class="text-sm text-gray-400 mb-4">You are the bridge between local climate action and global carbon finance. Use AI and satellite data to ensure the transparency of Ethiopia's GreenProof Tokens (GPT).</p>
+
+                <h3 class="text-2xl font-bold mb-4 text-orange-400">🚨 Projects Awaiting GreenProof Verification (${pending.length})</h3>
+                <div class="grid gap-6">
+                    ${pending.length === 0 ? 
+                        `<div class="text-center p-10 bg-gray-800 rounded-xl text-gray-400">No projects currently require manual verification.</div>` :
+                        pending.map(p => `
+                        <div onclick="window.app.showReviewModal('${p.id}')" class="bg-gray-800 p-6 rounded-xl shadow-lg border-l-4 border-orange-500 cursor-pointer transition duration-300 hover:ring-2 hover:ring-orange-500">
+                            <div class="flex flex-col md:flex-row justify-between mb-4">
+                                <div>
+                                    <p class="text-xl font-bold text-white">Project ID: ${p.id} - ${p.type}</p>
+                                    <p class="text-sm text-gray-400">Region: ${p.region} | Submitted: ${p.submitted}</p>
+                                </div>
+                                <div class="mt-4 md:mt-0 md:text-right">
+                                    <p class="text-3xl font-extrabold text-white">${p.tonnes.toFixed(1)} <span class="text-base font-semibold text-gray-400">Est. tCO2e</span></p>
+                                </div>
+                            </div>
+                            
+                            <div class="flex justify-end space-x-3 mt-4">
+                                <span class="text-xs text-gray-500 italic">Click card for satellite data review</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        // --- 3. BUYER DASHBOARD IMPLEMENTATION (Firestore Write) ---
+        
+        async function addToCart(credit) {
+            if (!currentUserId) return customAlert("Authentication required to add items to cart.");
+
+            const cartRef = dataServiceInstance.getCartDocument(currentUserId);
+            
+            try {
+                // Use a transaction to safely read, modify, and write the cart document
+                await runTransaction(db, async (transaction) => {
+                    // --- READ PHASE (must be first) ---
+                    const cartDoc = await transaction.get(cartRef); 
+                    
+                    let cartItems = cartDoc.exists() && cartDoc.data().items ? cartDoc.data().items : [];
+                    
+                    const existingItemIndex = cartItems.findIndex(item => item.id === credit.id);
+                    
+                    if (existingItemIndex > -1) {
+                        cartItems[existingItemIndex].quantity += 1;
+                    } else {
+                        cartItems.push({
+                            id: credit.id, 
+                            ...credit, 
+                            quantity: 1, 
+                            unitPrice: credit.price, 
+                            totalTonnes: credit.total 
+                        });
+                    }
+
+                    // --- WRITE PHASE (must be second) ---
+                    transaction.set(cartRef, { items: cartItems }); 
+                });
+                customAlert(`Added 1 unit of ${credit.id} (${credit.total.toLocaleString()} tCO2e) to your cart.`, 'Item Added');
+            } catch (error) {
+                console.error("Transaction failed (Add to Cart):", error);
+                customAlert('Failed to add item to cart. Try again.', 'Cart Error');
+            }
+        }
+        window.app.addToCart = addToCart;
+
+        function renderBuyerDashboard() {
+             const credits = appState.data.marketplaceCredits;
+            const availableTonnes = credits.reduce((sum, c) => sum + (c.total || 0), 0);
+            const avgPrice = credits.length > 0 ? (credits.reduce((sum, c) => sum + c.price, 0) / credits.length) : 0;
+
+            return `
+                <p class="text-sm text-gray-400 mb-4">Access transparent, verified carbon credits directly supporting climate action in Ethiopia and surrounding regions. Fuel your ESG goals with GreenProof Tokens.</p>
+                <!-- Overview Card -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    <div class="bg-blue-600 p-6 rounded-2xl shadow-xl">
+                        <p class="text-sm font-medium text-blue-100">Verified Tonnes Available</p>
+                        <p class="text-4xl font-extrabold text-white mt-1">${availableTonnes.toLocaleString()}</p>
+                        <p class="text-lg font-semibold text-white/90">tCO2e (GPT)</p>
+                    </div>
+                    <div class="bg-gray-800 p-6 rounded-2xl shadow-xl md:col-span-2">
+                        <div class="flex space-x-4 mb-4">
+                            <input type="text" placeholder="Search Projects (e.g., Reforestation, Biochar)" class="w-full bg-gray-700 text-white p-3 rounded-lg focus:ring-2 focus:ring-green-500 border-none">
+                            <button class="carbon-green text-gray-900 p-3 rounded-lg font-semibold hover:bg-green-400"><i data-lucide="search" class="w-5 h-5"></i></button>
+                        </div>
+                        <div class="flex justify-between items-center text-sm text-gray-400">
+                             <span class="font-medium">Average Price: <span class="text-green-400">ETB ${avgPrice.toFixed(2)}/tonne</span></span>
+                             <span class="font-medium">Filter by: <select class="bg-gray-700 rounded p-1 text-white text-xs"><option>Region</option><option>Type</option></select></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Carbon Credit Grid -->
+                <h3 class="text-2xl font-bold mb-4">Verified Carbon Credit Portfolio (${credits.length})</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    ${credits.length === 0 ? 
+                        `<div class="text-center p-10 bg-gray-800 rounded-xl lg:col-span-4 text-gray-400">No verified credits available yet. Check back after verifiers approve more projects!</div>` :
+                        credits.map(c => `
+                        <div class="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700 flex flex-col transition duration-200 hover:shadow-xl">
+                            <div class="h-32 bg-cover bg-center relative" style="background-image: url('${c.img}')">
+                                <span class="absolute top-2 right-2 text-xs bg-gray-900/70 text-green-400 font-bold px-2 py-1 rounded-full">${c.region}</span>
+                            </div>
+                            <div class="p-4 flex flex-col flex-1">
+                                <p class="text-lg font-bold text-white mb-1">${c.description}</p>
+                                <p class="text-sm text-gray-400 mb-3">${(c.total || 0).toLocaleString()} Verified Tonnes</p>
+                                <div class="mt-auto">
+                                    <p class="text-2xl font-extrabold text-green-400">ETB ${c.price.toFixed(2)}</p>
+                                    <p class="text-xs text-gray-500">Price Per Tonne (GPT)</p>
+                                    <button onclick='window.app.addToCart(${JSON.stringify(c)})' class="w-full mt-3 carbon-green text-gray-900 font-bold py-2 rounded-lg hover:bg-green-400 transition">
+                                        Add to Cart
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        // --- 4. CART & CHECKOUT IMPLEMENTATION (Firestore Write) ---
+
+        async function removeItem(itemId) {
+            if (!currentUserId) return;
+            const cartRef = dataServiceInstance.getCartDocument(currentUserId);
+
+            try {
+                await runTransaction(db, async (transaction) => {
+                    // --- READ PHASE (must be first) ---
+                    const cartDoc = await transaction.get(cartRef); 
+
+                    if (!cartDoc.exists() || !cartDoc.data().items) return;
+
+                    let cartItems = cartDoc.data().items;
+                    const index = cartItems.findIndex(item => item.id === itemId);
+                    
+                    if (index !== -1) {
+                        cartItems.splice(index, 1);
+                        // --- WRITE PHASE (must be second) ---
+                        transaction.set(cartRef, { items: cartItems }); 
+                    }
+                });
+                customAlert(`Item removed from cart.`, 'Removed');
+            } catch (error) {
+                console.error("Transaction failed (Remove Item):", error);
+                customAlert('Failed to remove item from cart. Try again.', 'Cart Error');
+            }
+        }
+        window.app.removeItem = removeItem;
+
+        async function checkout() {
+            if (!currentUserId) return customAlert("Authentication required to checkout.");
+
+            const cartItems = appState.data.cart;
+            if (cartItems.length === 0) {
+                customAlert("Your cart is empty. Please add credits before checking out.", "Cannot Checkout");
+                return;
+            }
+
+            const subtotal = cartItems.reduce((sum, item) => sum + (item.unitPrice * item.totalTonnes * item.quantity), 0);
+            const grandTotal = subtotal * 1.01; 
+            const totalTonnes = cartItems.reduce((sum, item) => sum + (item.totalTonnes * item.quantity), 0);
+
+            hideModal();
+            DOMElements.syncStatus.textContent = 'Processing Payment...';
+
+            // 1. Initiate Payment (Mock API Call)
+            const paymentSuccessful = await dataServiceInstance.initiatePayment(grandTotal.toFixed(2), `Purchase of ${totalTonnes} tCO2e`);
+
+            if (paymentSuccessful) {
+                try {
+                    // 2. Commit transaction to clear cart and update marketplace stock
+                    await runTransaction(db, async (transaction) => {
+                        const cartRef = dataServiceInstance.getCartDocument(currentUserId);
+                        const marketplaceCollection = dataServiceInstance.getPublicCollection('marketplaceCredits');
+                        const currentCartItems = appState.data.cart; // Use current in-memory cart
+
+                        // --- READ PHASE (must be first) ---
+                        // Get the documents for the marketplace credits being bought
+                        const creditRefs = currentCartItems.map(item => doc(marketplaceCollection, item.id));
+                        const creditDocs = await Promise.all(creditRefs.map(ref => transaction.get(ref)));
+                        
+                        // Read the cart reference to ensure it's part of the read set
+                        await transaction.get(cartRef);
+
+                        // --- WRITE PHASE (must be second) ---
+
+                        // Clear the cart
+                        transaction.set(cartRef, { items: [] });
+                        
+                        // Update marketplace stock (simple logic: decrease total tonnes)
+                        creditDocs.forEach((creditDoc, index) => {
+                            const item = currentCartItems[index];
+                            if (creditDoc.exists()) {
+                                const newTotal = (creditDoc.data().total || 0) - (item.totalTonnes * item.quantity);
+                                // The creditRef is available via the creditRefs array
+                                transaction.update(creditRefs[index], { total: newTotal > 0 ? newTotal : 0 });
+                            }
+                        });
+
+                        // Log purchase
+                        const purchaseLogRef = doc(dataServiceInstance.getPublicCollection('purchases'));
+                        transaction.set(purchaseLogRef, {
+                            userId: currentUserId,
+                            timestamp: new Date().toISOString(),
+                            totalAmount: grandTotal,
+                            items: currentCartItems.map(i => ({ id: i.id, qty: i.quantity, tonnes: i.totalTonnes * i.quantity }))
+                        });
+                    });
+
+                    customAlert(`Transaction complete! ETB ${grandTotal.toFixed(2)} charged. ${totalTonnes.toLocaleString()} tCO2e purchased.`, 'Purchase Complete');
+                    window.app.switchView('buyer');
+
+                } catch (error) {
+                    console.error("Checkout Transaction failed:", error);
+                    customAlert('Checkout failed due to data synchronization error. Funds may be held. (Read/Write order corrected)', 'Checkout Error');
+                }
+            } else {
+                 customAlert('Payment was cancelled or failed.', 'Payment Failed');
+            }
+            DOMElements.syncStatus.textContent = 'Synced';
+        }
+        window.app.checkout = checkout;
+
+        function renderCartCheckout() {
+            const cartItems = appState.data.cart;
+            const subtotal = cartItems.reduce((sum, item) => sum + (item.unitPrice * item.totalTonnes * item.quantity), 0);
+            const totalTonnes = cartItems.reduce((sum, item) => sum + (item.totalTonnes * item.quantity), 0);
+            const grandTotal = subtotal * 1.01;
+
+            if (cartItems.length === 0) {
+                 return `
+                    <div class="text-center p-10 bg-gray-800 rounded-xl">
+                        <i data-lucide="shopping-cart" class="w-16 h-16 text-gray-600 mx-auto mb-4"></i>
+                        <h3 class="text-2xl font-bold mb-2">Your Cart is Empty</h3>
+                        <p class="text-gray-400">Head back to the marketplace to find verified carbon credits.</p>
+                        <button onclick="window.app.switchView('buyer')" class="mt-6 carbon-green carbon-green-hover text-gray-900 py-2 px-6 rounded-lg font-bold transition">
+                            Go to Marketplace
+                        </button>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Cart Items List -->
+                    <div class="lg:col-span-2 space-y-4">
+                        <h3 class="text-2xl font-bold mb-4">Items in Cart (${cartItems.length})</h3>
+                        ${cartItems.map(item => `
+                            <div class="bg-gray-800 p-4 rounded-xl flex items-center space-x-4">
+                                <div class="w-20 h-20 bg-cover bg-center rounded-lg flex-shrink-0" style="background-image: url('${item.img}')"></div>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-lg font-semibold">${item.region} Project</p>
+                                    <p class="text-sm text-gray-400 truncate">${item.description}</p>
+                                    <p class="text-xs text-gray-400">${item.totalTonnes.toLocaleString()} tCO2e / unit</p>
+                                </div>
+                                <div class="text-right flex-shrink-0">
+                                    <p class="text-sm text-gray-300">Qty: ${item.quantity}</p>
+                                    <p class="text-xl font-extrabold text-white">ETB ${(item.unitPrice * item.totalTonnes * item.quantity).toFixed(2)}</p>
+                                    <button onclick="window.app.removeItem('${item.id}')" class="text-red-500 text-xs mt-1 hover:text-red-400 transition">Remove</button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <!-- Checkout Summary -->
+                    <div class="lg:col-span-1">
+                        <div class="bg-gray-800 p-6 rounded-xl shadow-lg border-t-4 border-blue-600 sticky top-20">
+                            <h3 class="text-2xl font-bold mb-4">Order Summary</h3>
+                            <div class="space-y-2 border-b border-gray-700 pb-4 mb-4">
+                                <div class="flex justify-between text-gray-300">
+                                    <span>Total Tonnes (GPT)</span>
+                                    <span class="font-bold">${totalTonnes.toLocaleString()} tCO2e</span>
+                                </div>
+                                <div class="flex justify-between text-gray-300">
+                                    <span>Subtotal Value</span>
+                                    <span class="font-bold">ETB ${subtotal.toFixed(2)}</span>
+                                </div>
+                                <div class="flex justify-between text-gray-300">
+                                    <span>Transaction Fee (1%)</span>
+                                    <span class="font-bold">ETB ${(grandTotal - subtotal).toFixed(2)}</span>
+                                </div>
+                            </div>
+                            <div class="flex justify-between text-2xl font-extrabold text-white pt-2">
+                                <span>Grand Total</span>
+                                <span class="carbon-green-text">ETB ${grandTotal.toFixed(2)}</span> 
+                            </div>
+                            <button onclick="window.app.checkout()" class="w-full mt-6 bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition">
+                                Proceed to Payment
+                            </button>
+                            <p class="text-xs text-gray-500 mt-2 text-center">Payment will attempt to use Telebirr/Chapa API (MOCK).</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+
+        // --- APPLICATION INITIALIZATION ---
+        async function initializeApp() {
+            if (!auth || !db) {
+                DOMElements.loadingSpinner.innerHTML = `<p class="mt-4 text-lg text-red-400">Error: Firebase failed to initialize. Check config.</p>`;
+                return;
+            }
+            
+            // 1. Handle initial sign-in
+            if (initialAuthToken) {
+                try {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } catch (e) {
+                    console.error("Custom Token sign-in failed, falling back to anonymous:", e);
+                    await signInAnonymously(auth);
+                }
+            } else {
+                await signInAnonymously(auth);
+            }
+
+            // 2. Auth State Listener
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    currentUserId = user.uid;
+                    DOMElements.userIdDisplay.textContent = currentUserId;
+                    DOMElements.appIdDisplay.textContent = appId;
+                    
+                    // 3. Initialize Data Service and Real-time Listeners
+                    if (!dataServiceInstance) {
+                        dataServiceInstance = new DataService(db, appId);
+                        dataServiceInstance.initListeners(currentUserId, render);
+                    } else {
+                         // Re-initialize listeners if user changes (unlikely in this environment)
+                         dataServiceInstance.initListeners(currentUserId, render);
+                    }
+                    
+                    // 4. Initial Render
+                    switchView('farmer');
+                } else {
+                    currentUserId = null;
+                    DOMElements.userIdDisplay.textContent = 'Signed Out';
+                }
+            });
+        }
+        
+        // --- Event Listeners and Final Setup ---
+        DOMElements.modalContainer.addEventListener('click', (e) => {
+            if (e.target === DOMElements.modalContainer) {
+                hideModal();
+            }
+        });
+        
+        // Initial app kick-off
+        initializeApp();
+    </script>
+</body>
+</html>
